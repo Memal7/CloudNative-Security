@@ -13,6 +13,58 @@ The primary goals of this project are to:
 5. **Automate with CI/CD** using GitHub Actions workflows
 6. **Demonstrate security misconfigurations** and their detection
 
+## Architecture
+
+### Azure infrastructure
+
+Red nodes are intentional misconfigurations.
+
+```mermaid
+flowchart TB
+    internet(["Internet"])
+
+    subgraph rg["Azure resource group"]
+        subgraph vnet["VNet"]
+            subgraph aks["AKS cluster (subnet-aks)"]
+                web["web-app pod<br/>React :3000<br/>SA bound to cluster-admin"]
+                backend["backend pod<br/>Express :4000<br/>ClusterIP"]
+            end
+            subgraph db["db-subnet"]
+                mongo["MongoDB VM<br/>Ubuntu 18.04, public IP, SSH<br/>Contributor on resource group"]
+                cron["Backup cron<br/>daily 2 AM, SAS token"]
+            end
+        end
+        acr["Azure Container Registry<br/>admin enabled"]
+        storage["Storage account<br/>public blob backups"]
+        law["Log Analytics<br/>kube-audit logs"]
+        defender["Defender for Cloud<br/>CSPM, AKS, VMs, ACR"]
+    end
+
+    internet -->|"LoadBalancer :80"| web
+    internet -->|"SSH :22"| mongo
+    web --> backend
+    backend -->|"MONGODB_URI secret"| mongo
+    mongo --> cron
+    cron -->|"mongodump upload"| storage
+    acr -->|"AcrPull"| aks
+    aks -->|"diagnostic settings"| law
+    defender -.->|"monitors"| rg
+
+    classDef misconfig fill:#FCEBEB,stroke:#A32D2D,color:#501313
+    class web,mongo,storage misconfig
+```
+
+### CI/CD pipeline
+
+`end-to-end.yml` runs on every push to `main` (or manually) and chains the reusable workflows:
+
+```mermaid
+flowchart LR
+    push(["Push to main"]) --> tf["terraform-deploy.yml<br/>terraform apply<br/>outputs ACR + AKS names"]
+    tf --> build["build-images.yml<br/>docker build + push to ACR"]
+    build --> deploy["kubernetes-deploy.yml<br/>create mongodb-secret<br/>kubectl apply"]
+```
+
 ## Repository Structure
 
 ```
